@@ -14,16 +14,17 @@ public class TerrainGenerator : MonoBehaviour
     [SerializeField] private Material _material;
 
     [Header("Chunk settings")]
+    [SerializeField] private bool _ignoreHeight;
     [SerializeField] private bool _isTerrainCentralized;
     [SerializeField] private int _chunkCountX, _chunkCountY;
     [SerializeField] private float _chunkSize;
     [SerializeField] private IndexFormat _format;
 
-    [DynamicRange(nameof(_format), nameof(IndexFormat.UInt16), byte.MaxValue, nameof(IndexFormat.UInt32), ushort.MaxValue)]
+    [DynamicRange(nameof(_format), nameof(IndexFormat.UInt16), byte.MaxValue + 1, nameof(IndexFormat.UInt32), ushort.MaxValue + 1)]
     [SerializeField] private int _lineVerticesCount;
 
     [Header("Noise generation")]
-    [SerializeField][Range(.01f, 1000)] private float _amplitude;
+    [SerializeField][Range(.01f, 10)] private float _amplitude;
     [SerializeField][Range(.001f, 5)] private float _scaleValue;
     [SerializeField][Range(1, 10)] private int _octavesCount;
     [SerializeField] private float _persistance;
@@ -100,10 +101,6 @@ public class TerrainGenerator : MonoBehaviour
 
         Vector3[] chunkVertices = GetChunkVertices(x, y, _format);
         int[] triangles = GetTriangles();
-
-        Debug.LogError(triangles.Length);
-        Debug.LogError(SystemInfo.supports32bitsIndexBuffer);
-
         Vector2[] uvs = GetUvs(x,y);
         FillChunkMesh(ref chunk, chunkVertices, triangles, uvs, _material, _format);
 
@@ -147,7 +144,8 @@ public class TerrainGenerator : MonoBehaviour
         Vector3[] vertices = new Vector3[_lineVerticesCount * _lineVerticesCount];
 
         float vertexDistance = _chunkSize / (_lineVerticesCount - 1);
-        float height, xPos, yPos = 0;
+        float xPos, yPos, height;
+
         Vector2 posVector = Vector2.zero;
         Vector3 centerOffset = new Vector3(_chunkCountX, 0, _chunkCountY) * _chunkSize * -.5f;
 
@@ -203,24 +201,20 @@ public class TerrainGenerator : MonoBehaviour
 
         Mesh mesh = new()
         {
-            indexFormat = format
-            ,
-            vertices = vertices
-            ,
-            triangles = triangles
-            ,
+            indexFormat = format,
+            vertices = vertices,
+            triangles = triangles,
             uv = uvs
         };
-/*        mesh.indexFormat = format;
-        mesh.;
-        mesh.triangles = triangles;
-        mesh.uv = uvs;*/
 
         chunk.MeshFilter.mesh = mesh;
 
-        chunk.MeshFilter.mesh.RecalculateBounds();
         chunk.MeshFilter.mesh.RecalculateNormals();
 
+        if (_ignoreHeight)
+            chunk.MeshFilter.mesh.vertices = vertices.Select(x => x.WithY(0)).ToArray();
+
+        chunk.MeshFilter.mesh.RecalculateBounds();
     }
 
     public float[,] GenerateHeightsMatrice()

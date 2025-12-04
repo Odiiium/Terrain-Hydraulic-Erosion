@@ -41,3 +41,12 @@ public static class CollectionExtensions
         return minimum;
     }
 }
+
+public static class VectorExtensions
+{
+    public static Vector3 WithY(this Vector3 vector, float value)
+    {
+        vector.y = value;
+        return vector;
+    }
+}

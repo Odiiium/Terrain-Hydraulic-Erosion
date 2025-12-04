@@ -41,7 +41,7 @@ public class TerrainGenerationPresenter : MonoBehaviour
 
     private void InitView()
     {
-        _view.Init(_erosion.HeightRT, _erosion.WaterRT, _erosion.SedimentRT, _erosion.OutflowRT);
+        _view.Init(_erosion.HeightRT, _erosion.WaterRT, _erosion.SedimentRT, _erosion.OutflowRT, _erosion.VelocityRT);
         Subscribe();
     }
 

@@ -1,458 +1,259 @@
-﻿#pragma kernel ComputeOutflow
-#pragma kernel UpdateWaterAndErosion
-#pragma kernel ApplyResults
+﻿#pragma kernel WaterIncrement
+#pragma kernel OutflowCalculation
+#pragma kernel VelocityFieldCalculation
+#pragma kernel ErosionAndDeposition
+#pragma kernel SedimentTransport
+#pragma kernel Evaporation
 
 cbuffer Params
 {
     int width;
     int height;
     float cellSize;
+
     float rainfall;
-    float evaporation;
-    float capacityFactor; // 4..12
-    float minSlope; // 0.01..0.03
-    float depositSpeed; // 0.3..0.8
-    float erodeSpeed; // 0.4..1.0
+
     float gravity; // 9.81
-    float timeStep;
+    float deltaTime;
+
+    float minSlope; // 0.01..0.03
+
+    float capacityFactor; // 4..12
+    float erodeSpeed; // 0.4..1.0
+    float depositSpeed; // 0.3..0.8
+    
+    float evaporation;
 }
 
 RWTexture2D<float> HeightMap;
 RWTexture2D<float> WaterMap;
 RWTexture2D<float> SedimentMap;
+
+RWTexture2D<float2> VelocityMap;
+
 RWTexture2D<float4> OutflowMap;
-RWTexture2D<float> TempWater;
-RWTexture2D<float> TempHeight;
-RWTexture2D<float> TempSediment;
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-inline float GetTotalHeight(int2 p)
+inline float GetTotalHeight(int2 pixel)
 {
-    return HeightMap[p] + WaterMap[p];
+    return HeightMap[pixel] + WaterMap[pixel];
 }
 
-[numthreads(8, 8, 1)]
-void ComputeOutflow(uint3 id : SV_DispatchThreadID)
+float CalculateDeltaH(int2 pixel, int2 neighborPixel)
 {
-    int2 p = int2(id.xy);
-    if (p.x >= width || p.y >= height)
-        return;
-
-    float h = HeightMap[p];
-    float w = WaterMap[p];
-    float totalH = h + w;
-
-    int2 L = int2(p.x - 1, p.y);
-    int2 R = int2(p.x + 1, p.y);
-    int2 D = int2(p.x, p.y - 1);
-    int2 U = int2(p.x, p.y + 1);
-
-    float4 neighH = float4(GetTotalHeight(L), GetTotalHeight(R), GetTotalHeight(D), GetTotalHeight(U));
-    float4 deltaH = totalH - neighH;
-    deltaH = max(deltaH, 0.0);
-
-    float K = max(dot(deltaH, 1.0.xxxx), 1e-6);
-
-    float4 outflow = (deltaH / K) * w;
-
-    outflow *= .8; // ← вместо gravity*timeStep
-
-    float totalOut = dot(outflow, 1);
-
-    if (totalOut > w)
-        outflow *= w / (totalOut + 1e-6);
-
-    OutflowMap[p] = outflow;
+    return GetTotalHeight(pixel) - GetTotalHeight(neighborPixel);
 }
 
-[numthreads(8, 8, 1)]
-void UpdateWaterAndErosion(uint3 id : SV_DispatchThreadID)
+float CalculateOutflowToNeighbor(int2 pixel, int2 neighborPixel, float previousOutflow)
 {
-    int2 p = int2(id.xy);
-    if (p.x >= width || p.y >= height)
-        return;
-
-    float h = HeightMap[p];
-    float w = WaterMap[p];
-    float s = SedimentMap[p];
-
-    // 1. Дождь
-    
-    //w += rainfall * timeStep;
-
-    // 2. Поток
-    float4 outflow = OutflowMap[p];
-    int2 L = int2(max(p.x - 1, 0), p.y);
-    int2 R = int2(min(p.x + 1, width - 1), p.y);
-    int2 D = int2(p.x, max(p.y - 1, 0));
-    int2 U = int2(p.x, min(p.y + 1, height - 1));
-
-    float inflow = OutflowMap[L].y + OutflowMap[R].x + OutflowMap[D].w + OutflowMap[U].z;
-    float outflowTotal = dot(outflow, 1.0.xxxx);
-    float newW = w + inflow - outflowTotal;
-
-    // 3. Ёмкость осадка — КЛАССИЧЕСКАЯ РАБОЧАЯ ФОРМУЛА
-    float4 neighH = float4(GetTotalHeight(L), GetTotalHeight(R), GetTotalHeight(D), GetTotalHeight(U));
-    float minNeigh = min(min(neighH.x, neighH.y), min(neighH.z, neighH.w));
-    float heightDiff = max(GetTotalHeight(p) - minNeigh, 0.0);
-    float slope = max(heightDiff / cellSize, minSlope); // ← minSlope = 0.02
-
-    // Ключевая формула (из реальных рабочих реализаций)
-    float capacity = capacityFactor * newW * slope; // ← без velocity, без timeStep!
-    capacity = max(capacity, 0.001);
-
-    // 4. Эрозия / Депозиция
-    float deltaS = 0.0;
-
-    if (s > capacity)
-    {
-        // Депозиция
-        deltaS = (s - capacity) * depositSpeed * timeStep;
-        deltaS = min(deltaS, s);
-        s -= deltaS;
-        h += deltaS;
-    }
-    else if (s < capacity)
-    {
-        // Эрозия — только если есть хоть какой-то поток!
-        if (outflowTotal - inflow > 0)
-        {
-            deltaS = (capacity - s) * erodeSpeed * timeStep;
-            deltaS = min(deltaS, h); // не размываем до нуля
-            s += deltaS;
-            h -= deltaS;
-        }
-    }
-
-    // 5. Испарение
-    //newW = max(newW * (1 - evaporation * .1), 0.0);
-
-    TempWater[p] = newW;
-    TempSediment[p] = s;
-    TempHeight[p] = h;
+    return (neighborPixel.x < 0 || neighborPixel.x >= width || neighborPixel.y < 0 || neighborPixel.y >= height) ?
+        0 :
+        max(0, previousOutflow + deltaTime * gravity * CalculateDeltaH(pixel, neighborPixel));
 }
 
-[numthreads(8, 8, 1)]
-void ApplyResults(uint3 id : SV_DispatchThreadID)
+float4 GetSafeOutflow(int2 pixel)
 {
-    int2 p = int2(id.xy);
-    if (p.x >= width || p.y >= height)
-        return;
-
-    WaterMap[p] = TempWater[p];
-    SedimentMap[p] = TempSediment[p];
-    HeightMap[p] = TempHeight[p];
-
-    // ← ИСПРАВЛЕНО! Обнуляем как float, а не float4
-    TempWater[p] = 0.0;
-    TempSediment[p] = 0.0;
-    TempHeight[p] = 0.0;
-    OutflowMap[p] = float4(0, 0, 0, 0);
+    return (pixel.x < 0 || pixel.x >= width || pixel.y < 0 || pixel.y >= height) ?
+        0 :
+        OutflowMap[pixel];
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-/*
-
-#pragma kernel ComputeOutflow
-#pragma kernel UpdateWaterAndErosion
-#pragma kernel ApplyResults
-
-cbuffer Params
-{
-    int width;
-    int height;
-    float cellSize; 
-    float rainfall; 
-    float evaporation; 
-    float capacityFactor; 
-    float minSlope; 
-    float depositSpeed; 
-    float erodeSpeed; 
-    float gravity;
-    float timeStep;
-   
-}
-
-const float error = 1e-6;
-
-RWTexture2D<float> HeightMap; 
-RWTexture2D<float> WaterMap; 
-RWTexture2D<float> SedimentMap; 
-
-RWTexture2D<float4> OutflowMap; // x=left, y=right, z=down, w=up
-
-RWTexture2D<float> TempWater; 
-RWTexture2D<float> TempHeight; 
-RWTexture2D<float> TempSediment;
-
-inline float texHeightSummary(int2 pixelCoord)
-{
-    return HeightMap[pixelCoord] + WaterMap[pixelCoord];
-}
-
-inline float vecContraction(float4 vec)
+float VectorContractionByOne(float4 vec)
 {
     return dot(vec, float4(1, 1, 1, 1));
 }
 
+int clampInt(int v, int a, int b)
+{
+    return max(a, min(v, b));
+}
+
+float SampleBilinear(RWTexture2D<float> tex, float2 srcUV, int2 texSize)
+{
+    float2 pos = srcUV * (float2)texSize - 0.5;
+
+    int2 iPos = int2(floor(pos));
+    float2 f = pos - (float2) iPos;
+
+    int2 i00 = int2(clampInt(iPos.x, 0, texSize.x - 1), clampInt(iPos.y, 0, texSize.y - 1));
+    int2 i10 = int2(clampInt(iPos.x + 1, 0, texSize.x - 1), clampInt(iPos.y, 0, texSize.y - 1));
+    int2 i01 = int2(clampInt(iPos.x, 0, texSize.x - 1), clampInt(iPos.y + 1, 0, texSize.y - 1));
+    int2 i11 = int2(clampInt(iPos.x + 1, 0, texSize.x - 1), clampInt(iPos.y + 1, 0, texSize.y - 1));
+
+    float v00 = tex.Load(int3(i00, 0));
+    float v10 = tex.Load(int3(i10, 0));
+    float v01 = tex.Load(int3(i01, 0));
+    float v11 = tex.Load(int3(i11, 0));
+
+    float vx0 = lerp(v00, v10, f.x);
+    float vx1 = lerp(v01, v11, f.x);
+    float vxy = lerp(vx0, vx1, f.y);
+
+    return vxy;
+}
+
 [numthreads(8, 8, 1)]
-void ComputeOutflow(uint3 id : SV_DispatchThreadID)
+void WaterIncrement(uint3 id : SV_DispatchThreadID)
 {
     int2 p = int2(id.xy);
-    
+
     if (p.x >= width || p.y >= height)
         return;
-
-    float h = HeightMap[p];
-    float w = WaterMap[p];
-    float totalHeight = texHeightSummary(p);
-
-    int2 pixL = int2(max(p.x - 1, 0), p.y);
-    int2 pixR = int2(min(p.x + 1, width - 1), p.y);
-    int2 pixD = int2(p.x, max(p.y - 1, 0));
-    int2 pixU = int2(p.x, min(p.y + 1, height - 1));
-
-    float hL = texHeightSummary(pixL);
-    float hR = texHeightSummary(pixR);
-    float hD = texHeightSummary(pixD);
-    float hU = texHeightSummary(pixU);
-
-    float4 deltaH = float4(
-        totalHeight - hL,
-        totalHeight - hR,
-        totalHeight - hD,
-        totalHeight - hU
-    );
     
-    deltaH = max(deltaH, .0);
+    WaterMap[p] += rainfall * deltaTime;    
+}
 
-    float deltaSum = vecContraction(deltaH) + error;
-    float4 outflow = deltaH * (w / deltaSum);
+[numthreads(8, 8, 1)]
+void OutflowCalculation(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
 
-    outflow *= gravity * timeStep;
+    if (p.x >= width || p.y >= height)
+        return;
+    
+    int2 L = int2(p.x - 1, p.y);
+    int2 R = int2(p.x + 1, p.y);
+    int2 U = int2(p.x, p.y + 1);
+    int2 D = int2(p.x, p.y - 1);
+    
+    float4 outflow = float4(CalculateOutflowToNeighbor(p, L, OutflowMap[p].r),
+                            CalculateOutflowToNeighbor(p, R, OutflowMap[p].g),
+                            CalculateOutflowToNeighbor(p, U, OutflowMap[p].b),
+                            CalculateOutflowToNeighbor(p, D, OutflowMap[p].a));
 
-    float totalOut = vecContraction(outflow);
-
-    if (totalOut > w)
-        outflow *= w / (totalOut + error);
-
+    float outflowDeltaSum = VectorContractionByOne(outflow) * deltaTime;
+    float scalingFactor = min(1, WaterMap[p] / outflowDeltaSum);
+    
+    outflow *= scalingFactor;
+    
     OutflowMap[p] = outflow;
 }
 
 [numthreads(8, 8, 1)]
-void UpdateWaterAndErosion(uint3 id : SV_DispatchThreadID)
+void VelocityFieldCalculation(uint3 id : SV_DispatchThreadID)
 {
     int2 p = int2(id.xy);
-    
+
     if (p.x >= width || p.y >= height)
         return;
-
-    float h = HeightMap[p];
-    float w = WaterMap[p];
-    float s = SedimentMap[p];
-
-    w += rainfall * timeStep;
     
+    int2 L = int2(p.x - 1, p.y);
+    int2 R = int2(p.x + 1, p.y);
+    int2 U = int2(p.x, p.y + 1);
+    int2 D = int2(p.x, p.y - 1);
+
+    float4 inflow = float4(GetSafeOutflow(L).g, GetSafeOutflow(R).r, GetSafeOutflow(U).a, GetSafeOutflow(D).b);
     float4 outflow = OutflowMap[p];
-
-    int2 L = int2(max(p.x - 1, 0), p.y);
-    int2 R = int2(min(p.x + 1, width - 1), p.y);
-    int2 D = int2(p.x, max(p.y - 1, 0));
-    int2 U = int2(p.x, min(p.y + 1, height - 1));
-
-    float inL = OutflowMap[L].y;
-    float inR = OutflowMap[R].x;
-    float inD = OutflowMap[D].w;
-    float inU = OutflowMap[U].z;
-
-    float inflowTotal = inL + inR + inD + inU;
-    float outflowTotal = vecContraction(outflow);
-
-    float newWater = w + inflowTotal - outflowTotal;
-
-    ////
     
-    //float avgNeighborH = (texHeightSummary(L) + texHeightSummary(R) +
-    //                      texHeightSummary(D) + texHeightSummary(U)) * .25;
-    //
-    //float slope = max((h + w - avgNeighborH) / cellSize, minSlope);
-    //float capacity = max(slope * newWater * capacityFactor, error);
-
+    float inflowSum = VectorContractionByOne(inflow);
+    float outflowSum = VectorContractionByOne(outflow);
     
-    float4 heightNeighbors = float4(texHeightSummary(L), texHeightSummary(R), texHeightSummary(D), texHeightSummary(U));
+    float deltaVelocity = deltaTime * (inflowSum - outflowSum);
 
-    float minNeighborH = min(min(heightNeighbors.x, heightNeighbors.y),
-                         min(heightNeighbors.z, heightNeighbors.w));
+    float water = WaterMap[p];
+    float newWater = water + deltaVelocity;
+    float waterAvg = (water + newWater) * .5;
     
-    float heightDiff = (h + w) - minNeighborH;
-    float slope = max(heightDiff / cellSize, minSlope);
-
-    float velocity = sqrt(heightDiff * gravity);
-    float capacity = capacityFactor * newWater * slope * velocity * timeStep;
-
-    capacity = max(capacity, 0.01);
+    float deltaWaterFlowX = (inflow.r - outflow.r + outflow.g - inflow.g) * .5;
+    float deltaWaterFLowY = (inflow.a - outflow.a + outflow.b - inflow.b) * .5;
     
-    ///////
-    
-    if (s > capacity)
-    {
-        float deltaS = min((s - capacity) * depositSpeed * timeStep, s);
-        s -= deltaS;
-        h += deltaS;
-    }
-    else if (s < capacity && outflowTotal > 0.01)
-    {
-        float erodeAmount = min(capacity - s, erodeSpeed * outflowTotal * timeStep);
-        erodeAmount = min(erodeAmount, h * 0.5);
-        s += erodeAmount;
-        h -= erodeAmount;
-    }
+    float2 velocity = float2(deltaWaterFlowX, deltaWaterFLowY) * deltaTime;
 
-    newWater *= (1.0 - evaporation * timeStep);
-    newWater = max(newWater, .0);
-
-    TempWater[p] = newWater;
-    TempSediment[p] = s;
-    TempHeight[p] = h;
+    VelocityMap[p] = velocity;
+    WaterMap[p] = newWater;
 }
 
 [numthreads(8, 8, 1)]
-void ApplyResults(uint3 id : SV_DispatchThreadID)
+void ErosionAndDeposition(uint3 id : SV_DispatchThreadID)
 {
     int2 p = int2(id.xy);
 
     if (p.x >= width || p.y >= height)
         return;
-
-    WaterMap[p] = TempWater[p];
-    SedimentMap[p] = TempSediment[p];
-    HeightMap[p] = TempHeight[p];
-
-    TempHeight[p] = 0;
-    TempSediment[p] = 0;
-    TempWater[p] = 0;
-
-    OutflowMap[p] = float4(0,0,0,0);
-}
-
-/*
-[numthreads(8, 8, 1)]
-void ErosionStep(uint3 id : SV_DispatchThreadID)
-{
-    int2 pix = int2(id.xy);
-
-    if (pix.x >= width || pix.y >= height)
-        return;
-
-    float h = HeightMap[pix];
-    float w = WaterMap[pix];
-    float s = SedimentMap[pix];
     
-    w += rainfall * timeStep;
+    float h = HeightMap[p];
+    float2 velocity = VelocityMap[p];
+    float sediment = SedimentMap[p];
+    
+    float hL = HeightMap[float2(p.x > 0 ? p.x - 1 : p.x, p.y)];
+    float hR = HeightMap[float2(p.x + 1 < width ? p.x + 1 : p.x, p.y)];
+    float hU = HeightMap[float2(p.x, p.y + 1 < height ? p.y + 1 : p.y)];
+    float hD = HeightMap[float2(p.x, p.y > 0 ? p.y - 1 : p.y)];
 
-    float totalH = h + w;
+    float dhdx = (hR - hL) * 0.5;
+    float dhdy = (hU - hD) * 0.5;
 
-    int2 left = int2(max(pix.x - 1, 0), pix.y);
-    int2 right = int2(min(pix.x + 1, width - 1), pix.y);
-    int2 down = int2(pix.x, max(pix.y - 1, 0));
-    int2 up = int2(pix.x, min(pix.y + 1, height - 1));
+    //float2 dhdp = float2(dhdx, dhdy);
 
+    float slope = sqrt(dhdx * dhdx + dhdy * dhdy);
+    slope = max(slope, minSlope);
 
-    float hl = HeightMap[left] + WaterMap[left];
-    float hr = HeightMap[right] + WaterMap[right];
-    float hd = HeightMap[down] + WaterMap[down];
-    float hu = HeightMap[up] + WaterMap[up];
+    float sinAlpha = slope / sqrt(1 + slope * slope);
+    
+    float capacity = capacityFactor * sinAlpha * length(velocity);
 
-    float4 dh = float4(totalH - hl, totalH - hr, totalH - hd, totalH - hu);
-
-    dh = max(dh, 0);
-
-    float sumDh = dh.x + dh.y + dh.z + dh.w + 1e-6;
-
-    float4 outflow = dh / sumDh * w; 
-
-    OutflowMap[pix] = outflow;
-
-    float4 out_left = OutflowMap[left];
-    float4 out_right = OutflowMap[right];
-    float4 out_down = OutflowMap[down];
-    float4 out_up = OutflowMap[up];
-
-    float inFromLeft = out_left.y;
-    float inFromRight = out_right.x;
-    float inFromDown = out_down.w;
-    float inFromUp = out_up.z;
-
-    float incoming = inFromLeft + inFromRight + inFromDown + inFromUp;
-
-    float newW = w - (outflow.x + outflow.y + outflow.z + outflow.w) + incoming;
-
-
-    float minNeighborH = min(min(hl, hr), min(hd, hu));
-    float slope = max((totalH - minNeighborH) / cellSize, minSlope);
-    float capacity = slope * newW * capacityFactor;
-
-
-    float deltaSed = 0;
-    if (s > capacity)
+    float newHeight;
+    float newSediment;
+    
+    if (capacity > sediment)
     {
-        deltaSed = (s - capacity) * depositSpeed * timeStep;
-        s -= deltaSed;
-        h += deltaSed;
+        float erosionDelta = (capacity - sediment) * erodeSpeed;
+        newHeight = h - erosionDelta;
+        newSediment = sediment + erosionDelta;
     }
     else
     {
-        float wanted = (capacity - s) * erodeSpeed * timeStep;
-        float eroded = min(wanted, h);
-        s += eroded;
-        h -= eroded;
+        float depositDelta = (sediment - capacity) * depositSpeed;
+        newHeight = h + depositDelta;
+        newSediment = sediment - depositDelta;
     }
+    
+    SedimentMap[p] = newSediment;
+    
+    int2 texSize = int2(width, height);
 
-    newW *= (1.0 - evaporation);
+    float2 src = p - velocity * deltaTime;
+    
+    float2 srcUV = src / texSize;
+    
+    float sed = SampleBilinear(SedimentMap, srcUV, texSize);
+    
+    SedimentMap[p] = sed;
+    HeightMap[p] = max(0, newHeight);
+}
 
-    HeightMap[pix] = h;
-    WaterMap[pix] = newW;
-    SedimentMap[pix] = s;
-}*/
+[numthreads(8, 8, 1)]
+void SedimentTransport(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+
+    if (p.x >= width || p.y >= height)
+        return;
+
+    //int2 texSize = int2(width, height);
+    //
+    //float2 vel = VelocityMap[p];
+    //
+    //float2 src = p - vel * deltaTime;
+    //
+    //float2 srcUV = src / texSize;
+    //
+    //float newSediment = SampleBilinear(SedimentMap, srcUV, texSize);
+    //
+    //SedimentMap[p] = newSediment;
+}
+
+[numthreads(8, 8, 1)]
+void Evaporation(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+
+    if (p.x >= width || p.y >= height)
+        return;
+    
+    float water = WaterMap[p];
+    
+    float evaporateFactor = (1 - evaporation * deltaTime);
+    
+    WaterMap[p] = water * evaporateFactor;
+}

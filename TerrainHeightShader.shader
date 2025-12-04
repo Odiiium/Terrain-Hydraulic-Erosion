@@ -80,7 +80,7 @@ Shader "Unlit/TerrainLit"
                 o.uv = TRANSFORM_TEX(v.uv, _MainTex);
 
                 float2 pos = (v.vertex.xz + _Size / 2) / _Size;
-                float h = tex2Dlod(_HeightMap, float4(pos,0,0)).r + 2;
+                float h = tex2Dlod(_HeightMap, float4(pos,0,0)).r;
 
                 float3 displaced = float3(v.vertex.x, h * _Amplitude, v.vertex.z);
 
@@ -106,7 +106,7 @@ Shader "Unlit/TerrainLit"
 
                 float4 terrainColor = lerp(_HeightColor * height.x, _SedimentColor, saturate(sedimentFactor));
                 
-                //terrainColor += waterFactor > .92 ? _WaterColor : terrainColor;
+                terrainColor += waterFactor > 0 ? _WaterColor * _WaterColor.a : terrainColor;
 
                 float3 N = normalize(i.worldNormal);
 

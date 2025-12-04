@@ -6,12 +6,13 @@ using UnityEngine;
 [AttributeUsage(AttributeTargets.Field, AllowMultiple = false)]
 public class DynamicRangeAttribute : PropertyAttribute
 {
-    public string EnumFieldName { get; }
-    public Dictionary<string, int> ValueMap { get; } = new();
+    public readonly string EnumFieldName;
+    public readonly Dictionary<string, int> ValueMap;
 
     public DynamicRangeAttribute(string enumFieldName, params object[] pairs)
     {
         EnumFieldName = enumFieldName;
+        ValueMap = new();
 
         if (pairs.Length % 2 != 0)
         {

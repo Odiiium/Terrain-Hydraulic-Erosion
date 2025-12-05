@@ -17,6 +17,8 @@ Shader "Unlit/TerrainLit"
         _HeightColor("Height Color", Color) = (1,1,1,1)
         _SedimentColor("Sediment Color", Color) = (1,1,1,1)
         _WaterColor("Water Color", Color) = (1,1,1,1)
+
+        [Toggle(USE_WATER)] _UseWater ("Use Water", Float) = 0
     }
     SubShader
     {
@@ -30,6 +32,8 @@ Shader "Unlit/TerrainLit"
             CGPROGRAM
             #pragma vertex vert
             #pragma fragment frag
+
+            #pragma multi_compile_local _ USE_WATER
 
             #include "UnityCG.cginc"
             #include "Lighting.cginc"
@@ -92,6 +96,32 @@ Shader "Unlit/TerrainLit"
                 return o;
             }
 
+            float4 CalculateWaterColor(float4 water, float4 height, float3 N, float3 V, float spec, float4 terrainColor)
+            {
+                float terrainHeight = height.x;
+                float waterHeight = water.x;
+
+                float depth = max(waterHeight - terrainHeight, -.2); 
+
+                float maxDepth = .1;
+                float waterAlpha = saturate(1 - depth / maxDepth);
+
+                float absorption = exp(-depth * 8);
+
+                float transparency = pow(saturate(water * 12), 1.5);   
+
+                float fresnel = pow(1 - saturate(dot(N, V)), 4);
+
+                float3 waterBase = _WaterColor.rgb;
+                float3 waterSpec = fresnel * spec * _SpecularColor.rgb * 5;
+
+                float3 finalWaterColor = waterBase * absorption + waterSpec;
+
+                float3 blended = lerp(terrainColor.rgb, finalWaterColor, transparency);
+
+                return float4(blended, 1);
+            }
+
             fixed4 frag (v2f i) : SV_Target
             {
                 float4 water = tex2D(_WaterMap, i.uv);
@@ -106,8 +136,6 @@ Shader "Unlit/TerrainLit"
 
                 float4 terrainColor = lerp(_HeightColor * height.x, _SedimentColor, saturate(sedimentFactor));
                 
-                terrainColor += waterFactor > 0 ? _WaterColor * _WaterColor.a : terrainColor;
-
                 float3 N = normalize(i.worldNormal);
 
                 float3 L = normalize(_WorldSpaceLightPos0.xyz);
@@ -118,12 +146,21 @@ Shader "Unlit/TerrainLit"
 
                 float spec = pow(max(dot(N, H), 0), _Shininess);
 
+                #ifdef USE_WATER
+                    if (waterFactor > 1e-6)
+                    {
+                        return CalculateWaterColor(water, height, N, V, spec, terrainColor);
+                    }
+                #endif
+
                 float3 color =
-                    terrainColor * (diff + _Ambient)
-                    ;//+ _SpecularColor.rgb * spec * float4(1,1,1,1);
+                    terrainColor * (diff + _Ambient);
+                    
+                    //+ _SpecularColor.rgb * spec * float4(1,1,1,1);
 
                 return float4(color, 1);
             }
+
             ENDCG
         }
     }

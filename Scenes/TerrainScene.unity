@@ -456,7 +456,7 @@ MonoBehaviour:
   _chunkCountY: 1
   _chunkSize: 20
   _format: 1
-  _lineVerticesCount: 1024
+  _lineVerticesCount: 512
   _amplitude: 1
   _scaleValue: 1.2
   _octavesCount: 6

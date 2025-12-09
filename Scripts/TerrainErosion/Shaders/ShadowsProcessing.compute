@@ -1,0 +1,159 @@
+﻿#pragma kernel CalculateShadows
+
+cbuffer Params
+{
+    float2 terrainSize;
+    float heightScale;
+
+    float3 lightDirection;
+    float stepSize;
+    float bias;             
+    
+    float maxDistance;      // actually i need to remove it later for PCSS shadow calculation (cuz its not required)
+    float softness;         // actually i need to remove it later for PCSS shadow calculation (cuz its not required)
+}
+Texture2D<float> HeightMap;
+RWTexture2D<float> ShadowMap;
+
+const float Pi = 6.2831853;
+
+float Hash21(float2 p)
+{
+    p = frac(p * float2(123.34, 456.21));
+    p += dot(p, p + 78.233);
+    return frac(p.x * p.y);
+}
+
+[numthreads(8, 8, 1)]
+void CalculateShadows(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+
+    uint width, height;
+    HeightMap.GetDimensions(width, height);
+    if (p.x >= width || p.y >= height)
+        return;
+
+    float2 uv = (p + 0.5) / float2(width, height);
+
+    float2 worldXZ = uv * terrainSize;
+    float heightValue = HeightMap[p] * heightScale;
+
+    float3 basePos = float3(worldXZ.x, heightValue + bias, worldXZ.y);
+
+    float3 lightDirNorm = normalize(-lightDirection);
+
+    const int RAYS = 128;
+    float maxSpread = .4;
+    float shadow = 0;
+    
+    for (int r = 0; r < RAYS; r++)
+    {
+        float rnd = Hash21(float2(p) + r);
+        float angle = rnd * Pi;
+        float2 offset = float2(cos(angle), sin(angle)) * maxSpread;
+
+        float3 jitterDir = normalize(lightDirNorm + float3(offset.x, 0, offset.y) * .25);
+
+        float3 pos = basePos;
+        float lit = 1.0;
+
+        for (int i = 0; i < 25; i++)
+        {
+            pos += jitterDir * stepSize;
+
+            if (pos.x < 0 || pos.x > terrainSize.x ||
+                pos.z < 0 || pos.z > terrainSize.y)
+                break;
+
+            float2 su = pos.xz / terrainSize;
+            int2 sp = int2(su * float2(width, height));
+            sp = clamp(sp, int2(0, 0), int2(width - 1, height - 1));
+
+            float sh = HeightMap.Load(int3(sp.x, sp.y, 0)).r * heightScale;
+
+            if (sh > pos.y)
+            {
+                lit = 0.0;
+                break;
+            }
+        }
+
+        shadow += lit;
+    }
+
+    shadow /= RAYS;
+
+    ShadowMap[p] = shadow;
+}
+
+    
+/*
+// DEFALT SHADOW CALCULATION + PENUMBRA
+
+[numthreads(8, 8, 1)]
+void CalculateShadows(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+
+    uint width, height;
+
+    HeightMap.GetDimensions(width, height);
+
+    if (p.x >= width || p.y >= height)
+        return;
+    
+    float2 uv = (float2) (p + 1) / (width, height);
+    
+    float2 worldXZ = uv * terrainSize;
+    
+    float h = HeightMap[p];
+    h *= heightScale;
+ 
+    float3 rayDirection = -normalize(lightDirection);
+    
+    float3 stepWorld = rayDirection * stepSize;
+
+    int maxSteps = (int) ceil(maxDistance / stepSize);
+    float3 posWorld = float3(worldXZ.x, h + bias, worldXZ.y);
+    
+    float occlusion = 0.0;
+    
+    for (int i = 0; i < maxSteps; ++i)
+    {
+        posWorld += stepWorld;
+
+        if (posWorld.x < 0.0 || posWorld.x > terrainSize.x || posWorld.z < 0.0 || posWorld.z > terrainSize.y)
+        {
+            break;
+        }
+
+        float2 sampUV = posWorld.xz / terrainSize;
+
+        float2 sampPxF = sampUV * float2(width, height) - 0.5;
+
+        int2 sampPx = int2(clamp((int) round(sampPxF.x), 0, (int) width - 1),
+                           clamp((int) round(sampPxF.y), 0, (int) height - 1));
+
+        float sampleH = HeightMap.Load(int3(sampPx.x, sampPx.y, 0)) * heightScale;
+
+        float deltaH = sampleH - posWorld.y;
+        
+        if (deltaH > .0)
+        {
+            float add = saturate(deltaH / softness);
+            occlusion += add;
+
+            if (occlusion >= 1.0f)
+            {
+                occlusion = 1.0;
+                break;
+            }
+        }
+    }
+    
+    float light = 1.0f - saturate(occlusion);
+    
+    ShadowMap[p] = light;
+}
+*/

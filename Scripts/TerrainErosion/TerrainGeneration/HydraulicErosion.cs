@@ -1,5 +1,7 @@
-﻿using System;
+﻿using Sirenix.Utilities;
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 public class HydraulicErosion
@@ -29,7 +31,7 @@ public class HydraulicErosion
     public RenderTexture OutflowRT { get; private set; }
     public RenderTexture VelocityRT { get; private set; }
 
-    private RenderTexture _tempHeight, _tempWater, _tempSediment;
+    private RenderTexture _writeHeightRT, _writeWaterRT, _writeSedimentRT, _writeOutflowRT;
 
     public void Init(ComputeShader erosionCompute, ErosionSettings settings, Texture2D heightMap)
     {
@@ -45,7 +47,6 @@ public class HydraulicErosion
     {
         Graphics.Blit(_initialHeightmap, HeightRT);
         ClearAllTextures(except: HeightRT);
-        //PopulateWaterTextureWithRandomDroplets();
     }
 
     public void ReleaseAll()
@@ -63,15 +64,19 @@ public class HydraulicErosion
     {
         ReleaseAll();
 
-        HeightRT = NewRT(RenderTextureFormat.RFloat);
-        WaterRT = NewRT(RenderTextureFormat.RFloat);
-        SedimentRT = NewRT(RenderTextureFormat.RFloat);
-        VelocityRT = NewRT(RenderTextureFormat.RGFloat);
-        OutflowRT = NewRT(RenderTextureFormat.ARGBFloat);
+        Action<RenderTexture> onTextureCreated = (texture) => _textures.Add(texture);
+        Vector2Int textureSize = Vector2Int.one * _settings.Size;
 
-        _tempHeight = NewRT(RenderTextureFormat.ARGBFloat);
-        _tempWater = NewRT(RenderTextureFormat.ARGBFloat);
-        _tempSediment = NewRT(RenderTextureFormat.ARGBFloat);
+        HeightRT = TextureExtensions.NewRenderTexture(textureSize, RenderTextureFormat.RFloat, onTextureCreated);
+        WaterRT = TextureExtensions.NewRenderTexture(textureSize, RenderTextureFormat.RFloat, onTextureCreated);
+        SedimentRT = TextureExtensions.NewRenderTexture(textureSize, RenderTextureFormat.RFloat, onTextureCreated);
+        VelocityRT = TextureExtensions.NewRenderTexture(textureSize, RenderTextureFormat.RGFloat, onTextureCreated);
+        OutflowRT = TextureExtensions.NewRenderTexture(textureSize, RenderTextureFormat.ARGBFloat, onTextureCreated);
+
+        _writeHeightRT = TextureExtensions.NewRenderTexture(textureSize, RenderTextureFormat.RFloat, onTextureCreated);
+        _writeWaterRT = TextureExtensions.NewRenderTexture(textureSize, RenderTextureFormat.RFloat, onTextureCreated);
+        _writeSedimentRT = TextureExtensions.NewRenderTexture(textureSize, RenderTextureFormat.RFloat, onTextureCreated);
+        _writeOutflowRT = TextureExtensions.NewRenderTexture(textureSize, RenderTextureFormat.ARGBFloat, onTextureCreated);
 
         PopulateHeightMap();
 
@@ -117,13 +122,9 @@ public class HydraulicErosion
         {
             if (except != null && texture == except)
                 return;
-            ClearTexture(texture);
-        });
-    }
 
-    private void ClearTexture(RenderTexture texture)
-    {
-        Graphics.Blit(Texture2D.blackTexture, texture);
+            TextureExtensions.ClearTexture(texture);
+        });
     }
 
     private void SetupShader(ErosionSettings settings)
@@ -173,65 +174,71 @@ public class HydraulicErosion
     {
         int threadGroups = GetThreadGroups();
 
-        _erosionShader.SetTexture(_waterIncrementKernel, "WaterMap", WaterRT);
+        PopulateKernelWithTextures(_waterIncrementKernel, new() { ErosionMap.WaterW, ErosionMap.WaterR });
 
         _erosionShader.Dispatch(_waterIncrementKernel, threadGroups, threadGroups, 1);
+
+        Graphics.Blit(_writeWaterRT, WaterRT);
     }
 
     private void OutflowCalculationStep()
     {
         int threadGroups = GetThreadGroups();
 
-        _erosionShader.SetTexture(_outflowCalculationKernel, "HeightMap", HeightRT);
-        _erosionShader.SetTexture(_outflowCalculationKernel, "WaterMap", WaterRT);
-        _erosionShader.SetTexture(_outflowCalculationKernel, "OutflowMap", OutflowRT);
+        PopulateKernelWithTextures(_outflowCalculationKernel, new()
+            { ErosionMap.HeightR, ErosionMap.WaterR, ErosionMap.OutflowR, ErosionMap.OutflowW });
 
         _erosionShader.Dispatch(_outflowCalculationKernel, threadGroups, threadGroups, 1);
+
+        Graphics.Blit(_writeOutflowRT, OutflowRT);
     }
 
     private void VelocityFieldCalculationStep()
     {
         int threadGroups = GetThreadGroups();
 
-        _erosionShader.SetTexture(_velocityFieldCalculationKernel, "WaterMap", WaterRT);
-        _erosionShader.SetTexture(_velocityFieldCalculationKernel, "OutflowMap", OutflowRT);
-        _erosionShader.SetTexture(_velocityFieldCalculationKernel, "VelocityMap", VelocityRT);
+        PopulateKernelWithTextures(_velocityFieldCalculationKernel, new() 
+            { ErosionMap.WaterR, ErosionMap.OutflowR, ErosionMap.VelocityRW, ErosionMap.WaterW });
 
         _erosionShader.Dispatch(_velocityFieldCalculationKernel, threadGroups, threadGroups, 1);
+
+        Graphics.Blit(_writeWaterRT, WaterRT);
     }
 
     private void ErosionAndDepositStep()
     {
         int threadGroups = GetThreadGroups();
 
-        _erosionShader.SetTexture(_erosionAndDepositionKernel, "HeightMap", HeightRT);
-        _erosionShader.SetTexture(_erosionAndDepositionKernel, "WaterMap", WaterRT);
-        _erosionShader.SetTexture(_erosionAndDepositionKernel, "OutflowMap", OutflowRT);
-        _erosionShader.SetTexture(_erosionAndDepositionKernel, "VelocityMap", VelocityRT);
-        _erosionShader.SetTexture(_erosionAndDepositionKernel, "SedimentMap", SedimentRT);
+        PopulateKernelWithTextures(_erosionAndDepositionKernel, new()
+            {ErosionMap.HeightR, ErosionMap.WaterR, ErosionMap.SedimentR, ErosionMap.OutflowR, ErosionMap.VelocityRW, ErosionMap.WaterW, ErosionMap.SedimentW, ErosionMap.HeightW});
 
         _erosionShader.Dispatch(_erosionAndDepositionKernel, threadGroups, threadGroups, 1);
+
+        Graphics.Blit(_writeWaterRT, WaterRT);
+        Graphics.Blit(_writeSedimentRT, SedimentRT);
+        Graphics.Blit(_writeHeightRT, HeightRT);
     }
 
     private void SedimentTransportStep()
     {
         int threadGroups = GetThreadGroups();
 
-        _erosionShader.SetTexture(_sedimentTransportKernel, "VelocityMap", VelocityRT);
-        _erosionShader.SetTexture(_sedimentTransportKernel, "SedimentMap", SedimentRT);
+        PopulateKernelWithTextures(_sedimentTransportKernel, new() { ErosionMap.SedimentR,  ErosionMap.VelocityRW, ErosionMap.SedimentW});
 
         _erosionShader.Dispatch(_sedimentTransportKernel, threadGroups, threadGroups, 1);
+
+        Graphics.Blit(_writeSedimentRT, SedimentRT);
     }
 
     private void EvaporationStep()
     {
         int threadGroups = GetThreadGroups();
 
-        _erosionShader.SetTexture(_evaporationKernel, "WaterMap", WaterRT);
-        _erosionShader.SetTexture(_evaporationKernel, "VelocityMap", VelocityRT);
-        _erosionShader.SetTexture(_evaporationKernel, "OutflowMap", OutflowRT);
+        PopulateKernelWithTextures(_evaporationKernel, new() { ErosionMap.WaterR,  ErosionMap.WaterW });
 
         _erosionShader.Dispatch(_evaporationKernel, threadGroups, threadGroups, 1);
+
+        Graphics.Blit(_writeWaterRT, WaterRT);
     }
 
     private int GetThreadGroups()
@@ -239,31 +246,25 @@ public class HydraulicErosion
         return Mathf.CeilToInt(_settings.Size / 8.0f);
     }
 
-    private RenderTexture NewRT(RenderTextureFormat format)
+    private void PopulateKernelWithTextures(int kernelId, List<ErosionMap> maps)
     {
-        RenderTexture rt = new RenderTexture(_settings.Size, _settings.Size, 0, format) { enableRandomWrite = true };
-        rt.filterMode = FilterMode.Bilinear;
-        rt.wrapMode = TextureWrapMode.Clamp;
-        rt.Create();
-
-        _textures.Add(rt);
-
-        return rt;
+        maps.Select(type => type switch
+            {
+                ErosionMap.HeightR => ("HeightMap", HeightRT),
+                ErosionMap.WaterR => ("WaterMap", WaterRT),
+                ErosionMap.SedimentR => ("SedimentMap", SedimentRT),
+                ErosionMap.OutflowR => ("OutflowMap", OutflowRT),
+                ErosionMap.HeightW => ("TempHeightMap", _writeHeightRT),
+                ErosionMap.WaterW => ("TempWaterMap", _writeWaterRT),
+                ErosionMap.SedimentW => ("TempSedimentMap", _writeSedimentRT),
+                ErosionMap.OutflowW => ("TempOutflowMap", _writeOutflowRT),
+                ErosionMap.VelocityRW => ("VelocityMap", VelocityRT),
+            })
+            .ForEach(tuple => _erosionShader.SetTexture(kernelId, tuple.Item1, tuple.Item2));
     }
 
-    [Serializable]
-    public class ErosionSettings
+    private enum ErosionMap
     {
-        public int Size;
-        public float CellSize;
-        public int IterationsPerFrame;
-        [Range(0f, 1f)] public float Evaporation;
-        [Range(0f,1f)] public float Rainfall;
-        public float CapacityFactor;
-        public float MinSlope;
-        public float DepositSpeed;
-        public float ErodeSpeed;
-        public float Gravity;
-        public float TimeStep;
-    }   
+        HeightR, WaterR, SedimentR, OutflowR, VelocityRW, HeightW, WaterW, SedimentW, OutflowW
+    }
 }

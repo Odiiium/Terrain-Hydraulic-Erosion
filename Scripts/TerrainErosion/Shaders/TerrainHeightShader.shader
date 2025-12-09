@@ -135,7 +135,7 @@ Shader "Unlit/TerrainLit"
 
             float3 calculateNormal(float2 vertexPos)
             {
-                float2 texel = 1.0 / 512; //_HeightMap_TexelSize.w;
+                float2 texel = 1.0 / _HeightMap_TexelSize.w;
                 float cellSize = _Size / _HeightMap_TexelSize.w;
 
                 float2 uv = (vertexPos + _Size * .5) / _Size;
@@ -143,9 +143,9 @@ Shader "Unlit/TerrainLit"
                 float h = sampleHeight(uv);
 
                 float hL = sampleHeight(uv + float2(-texel.x, 0));
-                float hR = sampleHeight(uv + float2(+texel.x, 0));
+                float hR = sampleHeight(uv + float2(texel.x, 0));
                 float hD = sampleHeight(uv + float2(0, -texel.y));
-                float hU = sampleHeight(uv + float2(0, +texel.y));
+                float hU = sampleHeight(uv + float2(0, texel.y));
 
                 float dX = hR - hL;
                 float dZ = hU - hD;
@@ -222,7 +222,7 @@ Shader "Unlit/TerrainLit"
 
                 curvature = (curvature - _CurvatureCapacity) * _CurvaturePower;
 
-                float slope = 1 - curvature;//length(i.worldNormal);
+                float slope = 1 - length(i.worldNormal);
 
                 float4 noise = tex2D(_NoiseTexture, i.uv); 
 
@@ -236,13 +236,13 @@ Shader "Unlit/TerrainLit"
 
                 float grassBlendAmount = _SlopeThreshold * (1 - _BlendAmount);
                 float grassWeight = 1 - saturate((slope - grassBlendAmount) / (_SlopeThreshold  - grassBlendAmount));
-                float4 color = lerp(groundColor, sedimentColor, grassWeight ); //groundColor * (1 - grassWeight) + sedimentColor * grassWeight * slope;
+                float4 color = groundColor * (1 - grassWeight) + sedimentColor * grassWeight * slope;
 
                 float snowBlendAmount = _SnowThreshold * (1 - _SnowBlendAmount);
                 float snowWeight = 1 - saturate((slope * 1.01 - snowBlendAmount) / (_SnowThreshold  - snowBlendAmount));
-                float snowBlended = snowColor * (1 - snowWeight) + color * snowWeight;
+                float snowBlended = snowColor * (1 - snowWeight) + color * (snowWeight);
 
-                color = height.x > (1 - noise.r) * slope / 1.3 ? snowBlended : color;
+                color = height.x > .8 * (1 - noise.r) ? snowBlended : color;
 
                 return color;
             }

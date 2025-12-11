@@ -223,6 +223,21 @@ Shader "Unlit/TerrainLit"
                 return float4(blended, 1);
             }
 
+            float3 triplanarSample(float3 N, sampler2D tex, float3 worldPos, float scale)
+            {
+                float3 w = normalize(abs(N));
+
+                w /= (w.x + w.y + w.z + 1e-6);
+
+                float3 colX = tex2D(tex, worldPos.yz * scale);
+                float3 colY = tex2D(tex, worldPos.xz * scale);
+                float3 colZ = tex2D(tex, worldPos.xy * scale);
+                
+                float3 albedo = colX * w.x + colY * w.y + colZ * w.z;
+
+                return albedo;
+            }
+
             float4 calculateTerrainColor(v2f i, float4 height)
             {   
                 float curvature = i.curvature;
@@ -238,13 +253,9 @@ Shader "Unlit/TerrainLit"
                     float4 groundColor = _HeightColor;
                     float4 snowColor = float4(1,1,1,1);
                 #else 
-                    float2 sedUv = TRANSFORM_TEX(i.uv, _SedimentTexture);
-                    float2 groundUv = TRANSFORM_TEX(i.uv, _GroundTexture);
-                    float2 snowUv = TRANSFORM_TEX(i.uv, _SnowTexture);
-
-                    float4 sedimentColor = tex2D(_SedimentTexture, sedUv);
-                    float4 groundColor = tex2D(_GroundTexture, groundUv);
-                    float4 snowColor = tex2D(_SnowTexture, snowUv);
+                    float4 sedimentColor = float4(triplanarSample(i.worldNormal, _SedimentTexture, i.worldPos, _SedimentTexture_ST.x), 1);
+                    float4 groundColor = float4(triplanarSample(i.worldNormal, _GroundTexture, i.worldPos, _GroundTexture_ST.x), 1);
+                    float4 snowColor = float4(triplanarSample(i.worldNormal, _SnowTexture, i.worldPos, _SnowTexture_ST.x), 1);
                 #endif
 
                 float grassBlendAmount = _SlopeThreshold * (1 - _BlendAmount);

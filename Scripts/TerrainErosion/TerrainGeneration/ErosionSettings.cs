@@ -14,4 +14,5 @@ public class ErosionSettings : ScriptableObject
     public float ErodeSpeed;
     public float Gravity;
     public float TimeStep;
+    public int RainDensity;
 }

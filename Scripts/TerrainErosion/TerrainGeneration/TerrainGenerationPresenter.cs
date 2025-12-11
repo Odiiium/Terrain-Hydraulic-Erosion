@@ -19,6 +19,8 @@ public class TerrainGenerationPresenter : MonoBehaviour
     private HydraulicErosion _erosion;
     private ShadowComputer _shadowComputer;
 
+    private uint _iteration = 0;
+
     private void Start()
     {
         _erosion = new();
@@ -71,9 +73,9 @@ public class TerrainGenerationPresenter : MonoBehaviour
 
     private void Subscribe()
     {
-        _view.StartButton.onClick.AddListener(() => _erosionRoutine = StartCoroutine(StartErosionCycle()));
-        _view.EndButton.onClick.AddListener(() => EndErosionCycle());
-        _view.RefreshButton.onClick.AddListener(() => _erosion.Refresh());
+        _view.StartButton.onClick.AddListener(StartErosion);
+        _view.EndButton.onClick.AddListener(EndErosionCycle);
+        _view.RefreshButton.onClick.AddListener(Refresh);
     }
 
     private void Unsubscribe()
@@ -94,6 +96,12 @@ public class TerrainGenerationPresenter : MonoBehaviour
         SetMaterialValues();
     }
 
+    private void StartErosion()
+    {
+        EndErosionCycle();
+        _erosionRoutine = StartCoroutine(StartErosionCycle());
+    }
+
     private IEnumerator StartErosionCycle()
     {
         EndErosionCycle();
@@ -107,7 +115,10 @@ public class TerrainGenerationPresenter : MonoBehaviour
         while (true)
         {
             _erosion.SimulationStep();
+            _view.SetIterationsText(_settings.IterationsPerFrame * (int)_iteration);
+
             iter++;
+            _iteration++;
 
             if (iter > 100)
             {
@@ -117,6 +128,13 @@ public class TerrainGenerationPresenter : MonoBehaviour
 
             yield return wait;
         }
+    }
+
+    private void Refresh()
+    {
+        _iteration = 0;
+        _erosion.Refresh();
+        _view.SetIterationsText(0);
     }
 
     private void EndErosionCycle()

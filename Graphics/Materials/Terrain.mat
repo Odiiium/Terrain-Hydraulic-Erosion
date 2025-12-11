@@ -142,7 +142,7 @@ Material:
     - _Ambient: 0.5
     - _Amplitude: 4
     - _Blend: 0
-    - _BlendAmount: 0.046
+    - _BlendAmount: 0.034
     - _BlendModePreserveSpecular: 1
     - _BumpScale: 1
     - _ClearCoatMask: 0
@@ -168,7 +168,7 @@ Material:
     - _ReceiveShadows: 1
     - _Shininess: 120.8
     - _Size: 20
-    - _SlopeThreshold: 0.915
+    - _SlopeThreshold: 0.93
     - _Smoothness: 0.5
     - _SmoothnessTextureChannel: 0
     - _SnowBlendAmount: 0.047

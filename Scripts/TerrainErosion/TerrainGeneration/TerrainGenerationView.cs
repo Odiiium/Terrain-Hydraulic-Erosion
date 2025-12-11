@@ -1,4 +1,5 @@
-﻿using UnityEngine;
+﻿using TMPro;
+using UnityEngine;
 using UnityEngine.UI;
 
 public class TerrainGenerationView : MonoBehaviour
@@ -8,6 +9,8 @@ public class TerrainGenerationView : MonoBehaviour
     [SerializeField] private RawImage _sediment;
     [SerializeField] private RawImage _outFlow;
     [SerializeField] private RawImage _velocity;
+
+    [SerializeField] private TextMeshProUGUI _iterationsText;
 
     public Button StartButton;
     public Button RefreshButton;
@@ -25,5 +28,10 @@ public class TerrainGenerationView : MonoBehaviour
     public void Init(RenderTexture height)
     {
         _height.texture = height;
+    }
+
+    public void SetIterationsText(int iteration)
+    {
+        _iterationsText.text = $"iteration #<b>{iteration}</b>";
     }
 }

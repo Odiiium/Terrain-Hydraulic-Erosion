@@ -12,14 +12,15 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 156621c4d7224164d818559f8d499f38, type: 3}
   m_Name: Erosion Settings
   m_EditorClassIdentifier: 
-  Size: 0
+  Size: 512
   CellSize: 1
   IterationsPerFrame: 250
-  Evaporation: 0.015
-  Rainfall: 0.012
+  Evaporation: 0.047
+  Rainfall: 0.024
   CapacityFactor: 1
-  MinSlope: 0.01
+  MinSlope: 0.001
   DepositSpeed: 1
   ErodeSpeed: 0.5
   Gravity: 9.81
   TimeStep: 0.01
+  RainDensity: 1

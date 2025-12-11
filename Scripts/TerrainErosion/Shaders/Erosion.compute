@@ -97,14 +97,14 @@ void OutflowCalculation(uint3 id : SV_DispatchThreadID)
     float prevU = GetSafeOutflow(U).a;
     float prevD = GetSafeOutflow(D).b;
     
-    float4 outflow = float4(CalculateOutflowToNeighbor(p, L, GetSafeOutflow(L).g),
-                            CalculateOutflowToNeighbor(p, R, GetSafeOutflow(R).r),
-                            CalculateOutflowToNeighbor(p, U, GetSafeOutflow(U).a),
-                            CalculateOutflowToNeighbor(p, D, GetSafeOutflow(D).b));
+    float4 outflow = float4(CalculateOutflowToNeighbor(p, L, prevL),
+                            CalculateOutflowToNeighbor(p, R, prevR),
+                            CalculateOutflowToNeighbor(p, U, prevU),
+                            CalculateOutflowToNeighbor(p, D, prevD));
 
     float outflowDeltaSum = VectorContractionByOne(outflow);
 
-    outflow *= outflowDeltaSum > water ? min(1.0, water / (outflowDeltaSum /* *deltaTime */)) : 1;
+    outflow *= outflowDeltaSum > water ? min(.1, water / (outflowDeltaSum)) : 1;
     
     TempOutflowMap[p] = outflow;
 }
@@ -175,7 +175,7 @@ void ErosionAndDeposition(uint3 id : SV_DispatchThreadID)
     //
     //float capacity = capacityFactor * slope * velocityLength * SedimentLiminiting(water, 10);
     
-    float sinAlpha = clamp(SinSlope(p, heightDerivative), 0, (1, 1));
+    float sinAlpha = clamp(SinSlope(p, heightDerivative), 0, 1);
     
     float capacity = capacityFactor * sinAlpha * length(velocity);
 

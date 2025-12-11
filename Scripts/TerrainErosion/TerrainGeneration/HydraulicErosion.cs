@@ -18,6 +18,8 @@ public class HydraulicErosion
     private int _sedimentTransportKernel;
     private int _evaporationKernel;
 
+    private int _rainIteration;
+
     private readonly string _waterIncrementKernelName = "WaterIncrement";
     private readonly string _outflowCalculationKernelName = "OutflowCalculation";
     private readonly string _velocityFieldCalculationKernelName = "VelocityFieldCalculation";
@@ -47,6 +49,7 @@ public class HydraulicErosion
     {
         Graphics.Blit(_initialHeightmap, HeightRT);
         ClearAllTextures(except: HeightRT);
+        _rainIteration = 0;
     }
 
     public void ReleaseAll()
@@ -161,12 +164,19 @@ public class HydraulicErosion
 
         for (int i = 0; i < _settings.IterationsPerFrame; i++)
         {
-            RainfallStep();
+            if (_rainIteration >= _settings.RainDensity)
+            {
+                RainfallStep();
+                _rainIteration = 0;
+            }
+
             OutflowCalculationStep();
             VelocityFieldCalculationStep();
             ErosionAndDepositStep();
             SedimentTransportStep();
             EvaporationStep();
+
+            _rainIteration++;
         }
     }
 
@@ -223,7 +233,7 @@ public class HydraulicErosion
     {
         int threadGroups = GetThreadGroups();
 
-        PopulateKernelWithTextures(_sedimentTransportKernel, new() { ErosionMap.SedimentR,  ErosionMap.VelocityRW, ErosionMap.SedimentW});
+        PopulateKernelWithTextures(_sedimentTransportKernel, new() { ErosionMap.SedimentR,  ErosionMap.VelocityRW, ErosionMap.SedimentW, ErosionMap.WaterR, ErosionMap.WaterW});
 
         _erosionShader.Dispatch(_sedimentTransportKernel, threadGroups, threadGroups, 1);
 

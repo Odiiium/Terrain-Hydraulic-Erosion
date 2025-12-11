@@ -25,6 +25,7 @@ Shader "Unlit/TerrainLit"
         _BlendAmount("Blend Amount", Range(0, .5)) = .02
         _SnowThreshold ("Snow Slope Threshold", Range(0, 1)) = .5
         _SnowBlendAmount("Snow Blend Amount", Range(0, 1)) = .02
+        _SnowHeightCoefficient ("Snow Height Coefficient", Range(0, 2)) = 1.3
 
         [Header(Color Data)][Space(5)]
         _HeightColor("Height Color", Color) = (1,1,1,1)
@@ -37,12 +38,14 @@ Shader "Unlit/TerrainLit"
         _Ambient("Ambient", Range(0,1)) = 0.2
 
         [Toggle(USE_WATER)] _UseWater ("Use Water", Float) = 0
+        [Toggle(USE_SIMPLE_COLORING)] _UseSimpleColoring ("Use Simple Color Model", Float) = 0
 
         [Header(Normal Smoothing)][Space(5)]
         [Toggle(USE_NORMAL_SMOOTHING)] _UseNormalSmooth ("Use Normal Smoothing", Float) = 0
         _NormalSmooth ("Normal smooth", Range(0,1)) = .5
 
         _DisplacementMap ("Displacement Map", 2D) = "white" {}
+        _NormalMap ("Normal Map", 2D) = "white" {}
 
         [Header(Curvature)][Space(5)]
         _CurvatureCapacity ("Curvature capacity", Range(0, 1)) = .8
@@ -64,6 +67,7 @@ Shader "Unlit/TerrainLit"
 
             #pragma multi_compile_local _ USE_WATER
             #pragma multi_compile_local _ USE_NORMAL_SMOOTHING
+            #pragma multi_compile_local _ USE_SIMPLE_COLORING
 
             #include "UnityCG.cginc"
             #include "Lighting.cginc"
@@ -94,7 +98,9 @@ Shader "Unlit/TerrainLit"
             sampler2D _SedimentMap;
             sampler2D _WaterMap;
             sampler2D _ShadowTexture;
+
             sampler2D _DisplacementMap;
+            sampler2D _NormalMap;
 
             sampler2D _SedimentTexture;
             sampler2D _GroundTexture;
@@ -112,6 +118,7 @@ Shader "Unlit/TerrainLit"
 
             float _Size;
             float _Amplitude;
+            float _SnowHeightCoefficient;
 
             float _SlopeThreshold;
             float _BlendAmount;
@@ -177,7 +184,7 @@ Shader "Unlit/TerrainLit"
 
                 float3 displaced = float3(IN.vertex.x, h * _Amplitude, IN.vertex.z);
 
-                o.vertex = UnityObjectToClipPos(float4(displaced,1));
+                o.vertex = UnityObjectToClipPos(float4(displaced, 1) );
                 o.worldPos = mul(unity_ObjectToWorld, float4(displaced,1)).xyz;
 
                 o.worldNormal = calculateNormal(IN.vertex.xz);
@@ -190,7 +197,7 @@ Shader "Unlit/TerrainLit"
                 return o;
             }
 
-            float4 CalculateWaterColor(float4 water, float4 height, float3 N, float3 V, float spec, float4 terrainColor)
+            float4 calculateWaterColor(float4 water, float4 height, float3 N, float3 V, float spec, float4 terrainColor)
             {
                 float terrainHeight = height.x;
                 float waterHeight = water.x;
@@ -216,7 +223,7 @@ Shader "Unlit/TerrainLit"
                 return float4(blended, 1);
             }
 
-            float4 CalculateTerrainColor(v2f i, float4 height)
+            float4 calculateTerrainColor(v2f i, float4 height)
             {   
                 float curvature = i.curvature;
 
@@ -226,13 +233,19 @@ Shader "Unlit/TerrainLit"
 
                 float4 noise = tex2D(_NoiseTexture, i.uv); 
 
-                float2 sedUv = TRANSFORM_TEX(i.uv, _SedimentTexture);
-                float2 groundUv = TRANSFORM_TEX(i.uv, _GroundTexture);
-                float2 snowUv = TRANSFORM_TEX(i.uv, _SnowTexture);
+                #ifdef USE_SIMPLE_COLORING
+                    float4 sedimentColor = _SedimentColor;
+                    float4 groundColor = _HeightColor;
+                    float4 snowColor = float4(1,1,1,1);
+                #else 
+                    float2 sedUv = TRANSFORM_TEX(i.uv, _SedimentTexture);
+                    float2 groundUv = TRANSFORM_TEX(i.uv, _GroundTexture);
+                    float2 snowUv = TRANSFORM_TEX(i.uv, _SnowTexture);
 
-                float4 sedimentColor = tex2D(_SedimentTexture, sedUv);
-                float4 groundColor = tex2D(_GroundTexture, groundUv);
-                float4 snowColor = tex2D(_SnowTexture, snowUv);
+                    float4 sedimentColor = tex2D(_SedimentTexture, sedUv);
+                    float4 groundColor = tex2D(_GroundTexture, groundUv);
+                    float4 snowColor = tex2D(_SnowTexture, snowUv);
+                #endif
 
                 float grassBlendAmount = _SlopeThreshold * (1 - _BlendAmount);
                 float grassWeight = 1 - saturate((slope - grassBlendAmount) / (_SlopeThreshold  - grassBlendAmount));
@@ -242,7 +255,7 @@ Shader "Unlit/TerrainLit"
                 float snowWeight = 1 - saturate((slope * 1.01 - snowBlendAmount) / (_SnowThreshold  - snowBlendAmount));
                 float snowBlended = snowColor * (1 - snowWeight) + color * (snowWeight);
 
-                color = height.x > .8 * (1 - noise.r) ? snowBlended : color;
+                color = height.x > _SnowHeightCoefficient * (1 - noise.r) ? snowBlended : color;
 
                 return color;
             }
@@ -258,7 +271,7 @@ Shader "Unlit/TerrainLit"
 
             float getShadow(v2f i)
             {
-                float remapLow = .2;
+                float remapLow = .12;
                 float shadow = tex2D(_ShadowTexture, i.uv);
                 return remap(shadow, 0, 1, remapLow, 1 - remapLow);
             }
@@ -289,7 +302,7 @@ Shader "Unlit/TerrainLit"
                 float waterFactor = log10(water.x);
                 waterFactor = remap(waterFactor, 0, -4, 1, 0);
 
-                float4 terrainColor = CalculateTerrainColor(i, height);
+                float4 terrainColor = calculateTerrainColor(i, height);
 
                 float3 N = normalize(i.worldNormal);
                 float3 V = normalize(_WorldSpaceCameraPos - i.worldPos);
@@ -299,15 +312,19 @@ Shader "Unlit/TerrainLit"
                 float diffuse = max(dot(N, L), 0);
                 float spec = pow(max(dot(N, H), 0), _Shininess);
 
+                float4 w = float4(0,0,0,0);
+
                 #ifdef USE_WATER
-                    if (waterFactor > 1e-6)
+                    if (waterFactor > .1e-3)
                     {
-                        return CalculateWaterColor(water, height, N, V, spec, terrainColor);
+                        w = calculateWaterColor(water, height, N, V, spec, terrainColor);
+                        return  w;
                     }
                 #endif
 
-                float3 color = terrainColor * (diffuse + _Ambient); //+ _SpecularColor.rgb * spec * float4(1,1,1,1);
+                float3 color = w.w > 0 ? w : terrainColor; 
 
+                color *= (diffuse + _Ambient);//+ _SpecularColor.rgb * spec * float4(1,1,1,1);
                 color += curvature * _CurvatureAddition;
                 color = tonemapACESFilm(color);
                 color *= getShadow(i);

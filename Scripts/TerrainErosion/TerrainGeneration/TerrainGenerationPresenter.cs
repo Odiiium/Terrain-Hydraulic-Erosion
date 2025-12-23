@@ -1,5 +1,6 @@
 ﻿using System.Collections;
 using UnityEngine;
+using EButton = ButtonAttribute;
 
 public class TerrainGenerationPresenter : MonoBehaviour
 {
@@ -146,7 +147,7 @@ public class TerrainGenerationPresenter : MonoBehaviour
         }
     }
 
-    [ButtonEditor.Button(nameof(RegenerateShadows))]
+    [EButton(nameof(RegenerateShadows))]
     private void RegenerateShadows()
     {
         _shadowSettings.LightDirection = RenderSettings.sun.transform.forward;

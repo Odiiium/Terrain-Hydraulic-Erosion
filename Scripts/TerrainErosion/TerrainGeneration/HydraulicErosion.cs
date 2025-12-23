@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using static ErosionSettings;
 
 public class HydraulicErosion
 {
@@ -27,7 +28,7 @@ public class HydraulicErosion
     private readonly string _sedimentTransportKernelName = "SedimentTransport";
     private readonly string _evaporationKernelName = "Evaporation";
 
-    public RenderTexture HeightRT {get; private set;}
+    public RenderTexture HeightRT { get; private set; }
     public RenderTexture WaterRT { get; private set; }
     public RenderTexture SedimentRT { get; private set; }
     public RenderTexture OutflowRT { get; private set; }
@@ -159,25 +160,11 @@ public class HydraulicErosion
 
     public void SimulationStep()
     {
-        if (_erosionShader == null) 
+        if (_erosionShader == null)
             return;
 
         for (int i = 0; i < _settings.IterationsPerFrame; i++)
-        {
-            if (_rainIteration >= _settings.RainDensity)
-            {
-                RainfallStep();
-                _rainIteration = 0;
-            }
-
-            OutflowCalculationStep();
-            VelocityFieldCalculationStep();
-            ErosionAndDepositStep();
-            SedimentTransportStep();
-            EvaporationStep();
-
-            _rainIteration++;
-        }
+            GetErosionStepsByAvailableFlags(_settings.ErosionFlags).ForEach(method => method());
     }
 
     private void RainfallStep()
@@ -207,7 +194,7 @@ public class HydraulicErosion
     {
         int threadGroups = GetThreadGroups();
 
-        PopulateKernelWithTextures(_velocityFieldCalculationKernel, new() 
+        PopulateKernelWithTextures(_velocityFieldCalculationKernel, new()
             { ErosionMap.WaterR, ErosionMap.OutflowR, ErosionMap.VelocityRW, ErosionMap.WaterW });
 
         _erosionShader.Dispatch(_velocityFieldCalculationKernel, threadGroups, threadGroups, 1);
@@ -233,7 +220,7 @@ public class HydraulicErosion
     {
         int threadGroups = GetThreadGroups();
 
-        PopulateKernelWithTextures(_sedimentTransportKernel, new() { ErosionMap.SedimentR,  ErosionMap.VelocityRW, ErosionMap.SedimentW, ErosionMap.WaterR, ErosionMap.WaterW});
+        PopulateKernelWithTextures(_sedimentTransportKernel, new() { ErosionMap.SedimentR, ErosionMap.VelocityRW, ErosionMap.SedimentW, ErosionMap.WaterR, ErosionMap.WaterW });
 
         _erosionShader.Dispatch(_sedimentTransportKernel, threadGroups, threadGroups, 1);
 
@@ -244,7 +231,7 @@ public class HydraulicErosion
     {
         int threadGroups = GetThreadGroups();
 
-        PopulateKernelWithTextures(_evaporationKernel, new() { ErosionMap.WaterR,  ErosionMap.WaterW });
+        PopulateKernelWithTextures(_evaporationKernel, new() { ErosionMap.WaterR, ErosionMap.WaterW });
 
         _erosionShader.Dispatch(_evaporationKernel, threadGroups, threadGroups, 1);
 
@@ -271,6 +258,27 @@ public class HydraulicErosion
                 ErosionMap.VelocityRW => ("VelocityMap", VelocityRT),
             })
             .ForEach(tuple => _erosionShader.SetTexture(kernelId, tuple.Item1, tuple.Item2));
+    }
+
+    private IEnumerable<Action> GetErosionStepsByAvailableFlags(ErosionStep flags)
+    {
+        foreach (ErosionStep step in Enum.GetValues(typeof(ErosionStep)))
+            if ((flags & step) != 0)
+                yield return GetActionByStep(step);
+
+        Action GetActionByStep(ErosionStep step)
+        {
+            return step switch
+            {
+                ErosionStep.Rainfall => RainfallStep,
+                ErosionStep.OutflowCalculation => OutflowCalculationStep,
+                ErosionStep.VelocityCalculation => VelocityFieldCalculationStep,
+                ErosionStep.Erosion => ErosionAndDepositStep,
+                ErosionStep.SedimentTransport => SedimentTransportStep,
+                ErosionStep.Evaporation => EvaporationStep,
+                _ => throw new ArgumentOutOfRangeException(nameof(step), step, null)
+            };
+        }
     }
 
     private enum ErosionMap

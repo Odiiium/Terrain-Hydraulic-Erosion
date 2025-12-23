@@ -172,7 +172,7 @@ Shader "Unlit/TerrainLit"
 
                 return float3(-dX, 2 * cellSize, -dZ);
             }
-
+            
             v2f vert (Input IN)
             {
                 v2f o;
@@ -202,14 +202,14 @@ Shader "Unlit/TerrainLit"
                 float terrainHeight = height.x;
                 float waterHeight = water.x;
 
-                float depth = max(waterHeight - terrainHeight, -.2); 
+                float depth = max(waterHeight - terrainHeight, -.3); 
 
                 float maxDepth = .1;
                 float waterAlpha = saturate(1 - depth / maxDepth);
 
-                float absorption = exp(-depth * 8);
+                float absorption = exp(-depth * 4);
 
-                float transparency = pow(saturate(water * 12), 1.5);   
+                float transparency = pow(saturate(water * 5), 1.5);   
 
                 float fresnel = pow(1 - saturate(dot(N, V)), 4);
 
@@ -237,6 +237,14 @@ Shader "Unlit/TerrainLit"
 
                 return albedo;
             }
+            
+            float4 toGrayscale(float4 color)
+            {
+                float3 weights = float3(0.2126, 0.7152, 0.0722);
+                float lum = dot(color.rgb, weights);
+
+                return float4(lum, lum, lum, color.a);
+            }
 
             float4 calculateTerrainColor(v2f i, float4 height)
             {   
@@ -258,12 +266,15 @@ Shader "Unlit/TerrainLit"
                     float4 snowColor = float4(triplanarSample(i.worldNormal, _SnowTexture, i.worldPos, _SnowTexture_ST.x), 1);
                 #endif
 
+                float4 displacement = toGrayscale(float4(triplanarSample(i.worldNormal, _DisplacementMap, i.worldPos, _DisplacementMap_ST.x), 1));
+                groundColor *= remap(displacement, 0, .5, 1, 0) * 2;
+                //return displacement;
                 float grassBlendAmount = _SlopeThreshold * (1 - _BlendAmount);
                 float grassWeight = 1 - saturate((slope - grassBlendAmount) / (_SlopeThreshold  - grassBlendAmount));
                 float4 color = groundColor * (1 - grassWeight) + sedimentColor * grassWeight * slope;
 
                 float snowBlendAmount = _SnowThreshold * (1 - _SnowBlendAmount);
-                float snowWeight = 1 - saturate((slope * 1.01 - snowBlendAmount) / (_SnowThreshold  - snowBlendAmount));
+                float snowWeight = 1 - saturate((slope - snowBlendAmount) / (_SnowThreshold  - snowBlendAmount));
                 float snowBlended = snowColor * (1 - snowWeight) + color * (snowWeight);
 
                 color = height.x > _SnowHeightCoefficient * (1 - noise.r) ? snowBlended : color;
@@ -326,10 +337,10 @@ Shader "Unlit/TerrainLit"
                 float4 w = float4(0,0,0,0);
 
                 #ifdef USE_WATER
-                    if (waterFactor > .1e-3)
+                    if (waterFactor > 1e-4)
                     {
                         w = calculateWaterColor(water, height, N, V, spec, terrainColor);
-                        return  w;
+                        //return  w;
                     }
                 #endif
 

@@ -29,12 +29,13 @@ RWTexture2D<float> HeightMap;
 RWTexture2D<float> WaterMap;
 RWTexture2D<float> SedimentMap;
 RWTexture2D<float4> OutflowMap;
+
 RWTexture2D<float2> VelocityMap;
 
 RWTexture2D<float> TempHeightMap;
 RWTexture2D<float> TempWaterMap;
 RWTexture2D<float> TempSedimentMap;
-RWTexture2D<float> TempOutflowMap;
+RWTexture2D<float4> TempOutflowMap;
 
 #include "math.hlsl"
 
@@ -67,6 +68,21 @@ inline float SedimentLiminiting(float water, float maxErosion)
     return water <= 0 ? 0 : water < maxErosion ? 1 - (maxErosion - water) / maxErosion : 1;
 }
 
+float ComputeCapacity(int2 p)
+{
+    float3 up = (0, 0, 1);
+
+    float2 heightDerivative = CalculateTextureDerivative(HeightMap, p, 1, 1);
+
+    float3 normal = (heightDerivative.x, heightDerivative.y, 1) * 2;
+
+    float sinAlpha = max(0.05, sin(acos(dot(normalize(normal), up))));
+    
+    float2 velocity = VelocityMap[p];
+    
+    return capacityFactor * sinAlpha * length(velocity) * min(WaterMap[p], .01) * 100;
+}
+
 [numthreads(8, 8, 1)]
 void WaterIncrement(uint3 id : SV_DispatchThreadID)
 {
@@ -92,15 +108,12 @@ void OutflowCalculation(uint3 id : SV_DispatchThreadID)
     int2 U = int2(p.x, p.y + 1);
     int2 D = int2(p.x, p.y - 1);
     
-    float prevL = GetSafeOutflow(L).g;
-    float prevR = GetSafeOutflow(R).r;
-    float prevU = GetSafeOutflow(U).a;
-    float prevD = GetSafeOutflow(D).b;
+    float4 current = GetSafeOutflow(p);
     
-    float4 outflow = float4(CalculateOutflowToNeighbor(p, L, prevL),
-                            CalculateOutflowToNeighbor(p, R, prevR),
-                            CalculateOutflowToNeighbor(p, U, prevU),
-                            CalculateOutflowToNeighbor(p, D, prevD));
+    float4 outflow = float4(CalculateOutflowToNeighbor(p, L, current.r),
+                            CalculateOutflowToNeighbor(p, R, current.g),
+                            CalculateOutflowToNeighbor(p, U, current.b),
+                            CalculateOutflowToNeighbor(p, D, current.a));
 
     float outflowDeltaSum = VectorContractionByOne(outflow);
 
@@ -128,14 +141,14 @@ void VelocityFieldCalculation(uint3 id : SV_DispatchThreadID)
     float inflowSum = VectorContractionByOne(inflow);
     float outflowSum = VectorContractionByOne(outflow);
     
-    float waterDelta = (inflowSum - outflowSum) * deltaTime;
+    float waterDelta = (inflowSum - outflowSum);
 
     float water = WaterMap[p];
     float newWater = water + waterDelta;
     float waterAvg = (water + newWater) * .5;
     
     float deltaWaterFlowX = (inflow.r - outflow.r + outflow.g - inflow.g) * .5;
-    float deltaWaterFLowY = (inflow.a - outflow.a + outflow.b - inflow.b) * .5;
+    float deltaWaterFLowY = (inflow.a - outflow.a + outflow.b - inflow.b) * .5; 
     
     float2 velocity = float2(deltaWaterFlowX, deltaWaterFLowY);
     
@@ -157,35 +170,19 @@ void ErosionAndDeposition(uint3 id : SV_DispatchThreadID)
     float water = WaterMap[p];
     
     float2 heightDerivative = CalculateTextureDerivative(HeightMap, p, 1, 1);
-    
-    
-    // Physics derivative based calculation (idk why its bugging...)
-    
-    //float3 normal = normalize((-heightDerivative.x, 1, -heightDerivative.y));
-    //
-    //float velocityLength = length(velocity);
-    //
-    //float velocity3d = (velocity.x, 0, velocity.y);
-    //
-    //float3 flowVector = normalize((velocity.x, dot(velocity, heightDerivative), velocity.y));   
-    //
-    //float cosTerm = max(.0, dot(normal, flowVector));
-    //
-    //float slope = max(minSlope, cosTerm);
-    //
-    //float capacity = capacityFactor * slope * velocityLength * SedimentLiminiting(water, 10);
-    
-    float sinAlpha = clamp(SinSlope(p, heightDerivative), 0, 1);
-    
-    float capacity = capacityFactor * sinAlpha * length(velocity);
 
-    float newHeight;
-    float newSediment;
+    float capacity = ComputeCapacity(p);
+    
+    float newHeight = HeightMap[p];
+    float newSediment = SedimentMap[p];
     float newWater = WaterMap[p];
     
     if (capacity >= sediment)
     {
         float erosionDelta = (capacity - sediment) * erodeSpeed * deltaTime;
+
+        erosionDelta = min(erosionDelta, h);
+
         newHeight = h - erosionDelta;
         newSediment = sediment + erosionDelta;
         newWater = water + erosionDelta;
@@ -193,14 +190,32 @@ void ErosionAndDeposition(uint3 id : SV_DispatchThreadID)
     else
     {
         float depositDelta = (sediment - capacity) * depositSpeed * deltaTime;
+
+        depositDelta = min(depositDelta, water);
+        depositDelta = min(depositDelta, sediment);
+
         newHeight = h + depositDelta;
         newSediment = sediment - depositDelta;
         newWater = water - depositDelta;
     }
     
     TempSedimentMap[p] = newSediment;
-    TempHeightMap[p] = max(0, newHeight);
+    TempHeightMap[p] = newHeight;
     TempWaterMap[p] = newWater;
+}
+
+inline float2 GetSafeVelocity(int2 pixel)
+{
+    return (pixel.x < 0 || pixel.x >= width || pixel.y < 0 || pixel.y >= height) ?
+        0 :
+        VelocityMap[pixel];
+}
+
+inline float2 GetSafeSediment(int2 pixel)
+{
+    return (pixel.x < 0 || pixel.x >= width || pixel.y < 0 || pixel.y >= height) ?
+        0 :
+        SedimentMap[pixel];
 }
 
 [numthreads(8, 8, 1)]
@@ -217,9 +232,33 @@ void SedimentTransport(uint3 id : SV_DispatchThreadID)
     
     float2 src = p - vel * deltaTime;
     
-    float newSediment = SampleBilinear(SedimentMap, src / texSize, texSize);   
+    float2 uv = p / texSize + vel * deltaTime;
     
-    TempSedimentMap[p] = newSediment;
+    float2 L = p + (-1, 0);
+    float2 R = p + (1, 0);
+    float2 U = p + (0, 1);
+    float2 D = p + (0, -1);
+    
+    float2 lVel = GetSafeVelocity(L);
+    float2 rVel = GetSafeVelocity(R);
+    float2 uVel = GetSafeVelocity(U);
+    float2 dVel = GetSafeVelocity(D);
+    
+    float lFlow = lVel.x > 0 ? lVel.x : 0;
+    float rFlow = rVel.x < 0 ? abs(rVel.x) : 0;
+    float uFlow = uVel.y < 0 ? abs(uVel.y) : 0;
+    float dFlow = dVel.y > 0 ? dVel.y : 0;
+    
+    float lSed = GetSafeSediment(L);
+    float rSed = GetSafeSediment(R);
+    float uSed = GetSafeSediment(U);
+    float dSed = GetSafeSediment(D);
+    
+    float totalSediment = dot(float4(lSed, rSed, uSed, dSed), float4(lFlow, rFlow, uFlow, dFlow));
+    
+    float newSediment = SampleBilinear(SedimentMap, src / (float2) texSize, texSize);
+    
+    TempSedimentMap[p] = totalSediment * 4;
 }
 
 [numthreads(8, 8, 1)]

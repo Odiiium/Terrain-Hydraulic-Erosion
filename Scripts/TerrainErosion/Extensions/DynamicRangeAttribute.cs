@@ -4,7 +4,12 @@ using UnityEditor;
 using UnityEngine;
 
 [AttributeUsage(AttributeTargets.Field, AllowMultiple = false)]
-public class DynamicRangeAttribute : PropertyAttribute
+public class DynamicRangeAttribute :
+#if UNITY_EDITOR
+ PropertyAttribute
+#else 
+ Attribute
+#endif
 {
     public readonly string EnumFieldName;
     public readonly Dictionary<string, int> ValueMap;
@@ -28,7 +33,7 @@ public class DynamicRangeAttribute : PropertyAttribute
         }
     }
 }
-
+#if UNITY_EDITOR
 [CustomPropertyDrawer(typeof(DynamicRangeAttribute))]
 public class EnumDynamicRangeDrawer : PropertyDrawer
 {
@@ -75,3 +80,5 @@ public class EnumDynamicRangeDrawer : PropertyDrawer
         return property.serializedObject.FindProperty(fullPath);
     }
 }
+
+#endif

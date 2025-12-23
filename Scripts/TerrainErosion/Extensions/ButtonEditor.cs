@@ -3,6 +3,8 @@ using UnityEngine;
 using UnityEditor;
 using System.Reflection;
 
+#if UNITY_EDITOR
+
 [CustomEditor(typeof(MonoBehaviour), true)]
 public class ButtonEditor : Editor
 {
@@ -30,14 +32,17 @@ public class ButtonEditor : Editor
         }
     }
 
-    [AttributeUsage(AttributeTargets.Method)]
-    public class ButtonAttribute : Attribute
-    {
-        public string Label;
 
-        public ButtonAttribute(string label = null)
-        {
-            Label = label;
-        }
+}
+#endif
+
+[AttributeUsage(AttributeTargets.Method)]
+public class ButtonAttribute : Attribute
+{
+    public string Label;
+
+    public ButtonAttribute(string label = null)
+    {
+        Label = label;
     }
 }

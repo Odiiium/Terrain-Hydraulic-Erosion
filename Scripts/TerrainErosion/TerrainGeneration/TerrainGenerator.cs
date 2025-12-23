@@ -5,7 +5,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
-using EButton = ButtonEditor.ButtonAttribute;
+using EButton = ButtonAttribute;
 
 [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
 public class TerrainGenerator : MonoBehaviour
@@ -271,7 +271,9 @@ public class TerrainGenerator : MonoBehaviour
 
         System.IO.File.WriteAllBytes(path, png);
 
-        AssetDatabase.Refresh();
+        #if UNITY_EDITOR
+            AssetDatabase.Refresh();
+        #endif
     }
 
     public List<Chunk> GetChunks() => _chunks;
